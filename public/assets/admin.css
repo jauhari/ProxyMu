@@ -323,6 +323,59 @@ canvas {
   font-weight: 800;
 }
 
+.setup-snippets {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-card {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  padding: 12px;
+}
+
+.setup-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.setup-card strong,
+.setup-card span {
+  display: block;
+}
+
+.setup-card strong {
+  font-size: 13px;
+}
+
+.setup-card span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.setup-card pre {
+  min-height: 54px;
+  max-height: 112px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #0d1116;
+  color: #d8e0ea;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .provider-card,
 .list-row {
   border: 1px solid var(--line);

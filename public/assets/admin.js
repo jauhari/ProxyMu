@@ -196,7 +196,74 @@ function renderSettings() {
   $('settingsMessage').textContent = settings.proxyAccessTokenConfigured
     ? 'LAN proxy token is configured.'
     : 'LAN proxy token is not configured yet.';
+  renderSetupSnippets();
   renderModelRouting();
+}
+
+function setupOrigins() {
+  const origin = window.location.origin;
+  const openaiBase = `${origin}/v1`;
+  return { origin, openaiBase };
+}
+
+function renderSetupSnippets() {
+  const { origin, openaiBase } = setupOrigins();
+  const snippets = [
+    {
+      title: 'Claude Code',
+      note: 'Anthropic base URL harus root proxy, tanpa /v1.',
+      value: [
+        `$env:ANTHROPIC_BASE_URL="${origin}"`,
+        '$env:CLAUDE_MODEL="gpt-5.5"',
+        '$env:ANTHROPIC_AUTH_TOKEN="proxy-local-token"'
+      ].join('\n')
+    },
+    {
+      title: 'OpenAI Compatible',
+      note: 'Untuk Kiro extension, Cline, Roo, Kilo Code, Continue, dan SDK OpenAI-compatible.',
+      value: [
+        `Base URL: ${openaiBase}`,
+        'API Key: proxy-local-token',
+        'Model: gpt-5.5'
+      ].join('\n')
+    },
+    {
+      title: 'Kiro / Cline / Roo',
+      note: 'Pilih provider OpenAI Compatible atau Custom OpenAI.',
+      value: [
+        'Provider: OpenAI Compatible',
+        `Base URL: ${openaiBase}`,
+        'API Key: proxy-local-token',
+        'Model ID: gpt-5.5'
+      ].join('\n')
+    },
+    {
+      title: 'Codex Responses',
+      note: 'Endpoint kompatibel untuk client yang langsung memanggil Responses API.',
+      value: [
+        `POST ${openaiBase}/responses`,
+        'Authorization: Bearer proxy-local-token',
+        'Content-Type: application/json'
+      ].join('\n')
+    }
+  ];
+
+  $('setupSnippets').innerHTML = snippets
+    .map(
+      (snippet, index) => `
+      <div class="setup-card">
+        <div class="setup-card-head">
+          <div>
+            <strong>${escapeHtml(snippet.title)}</strong>
+            <span>${escapeHtml(snippet.note)}</span>
+          </div>
+          <button type="button" class="ghost copy-setup" data-index="${index}">Copy</button>
+        </div>
+        <pre>${escapeHtml(snippet.value)}</pre>
+      </div>`
+    )
+    .join('');
+  window.codexProxySetupSnippets = snippets;
 }
 
 function renderModelRouting() {
@@ -385,6 +452,36 @@ $('historyRange').addEventListener('change', async (event) => {
   await refreshRequests();
 });
 $('applyFilters').addEventListener('click', refreshRequests);
+
+$('setupSnippets').addEventListener('click', async (event) => {
+  const button = event.target.closest('.copy-setup');
+  if (!button) return;
+  const snippet = window.codexProxySetupSnippets?.[Number(button.dataset.index)];
+  if (!snippet) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(snippet.value);
+    } else {
+      const textArea = document.createElement('textarea');
+      textArea.value = snippet.value;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      textArea.remove();
+    }
+    button.textContent = 'Copied';
+    setTimeout(() => {
+      button.textContent = 'Copy';
+    }, 1200);
+  } catch {
+    button.textContent = 'Copy failed';
+    setTimeout(() => {
+      button.textContent = 'Copy';
+    }, 1400);
+  }
+});
 
 $('settingsForm').addEventListener('submit', async (event) => {
   event.preventDefault();

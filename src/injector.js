@@ -3,6 +3,9 @@ const path = require('node:path');
 const os = require('node:os');
 
 const HOME = os.homedir();
+const PLATFORM = os.platform(); // 'darwin' = macOS, 'win32' = Windows, 'linux' = Linux
+const IS_WINDOWS = PLATFORM === 'win32';
+const IS_MAC = PLATFORM === 'darwin';
 
 // ─── TOML helpers (no dependency) ────────────────────────────────────────────
 
@@ -72,17 +75,37 @@ async function exists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
-// ─── Paths ───────────────────────────────────────────────────────────────────
+// ─── Paths (platform-aware) ──────────────────────────────────────────────────
 
-const PATHS = {
-  codexConfig: path.join(HOME, '.codex', 'config.toml'),
-  codexState: path.join(HOME, '.codex', '.proxymu-state.json'),
-  opencodeConfig: path.join(HOME, '.config', 'opencode', 'opencode.json'),
-  kiloSettings: path.join(HOME, 'Library', 'Application Support', 'Antigravity IDE', 'User', 'settings.json'),
-  proxymuEnv: path.join(HOME, '.proxymu.env'),
-  zshrc: path.join(HOME, '.zshrc'),
-  bashrc: path.join(HOME, '.bashrc')
-};
+const PATHS = (() => {
+  const base = {
+    codexConfig: path.join(HOME, '.codex', 'config.toml'),
+    codexState: path.join(HOME, '.codex', '.proxymu-state.json'),
+    opencodeConfig: path.join(HOME, '.config', 'opencode', 'opencode.json'),
+    proxymuEnv: IS_WINDOWS ? path.join(HOME, '.proxymu.env') : path.join(HOME, '.proxymu.env'),
+  };
+
+  if (IS_MAC) {
+    return {
+      ...base,
+      kiloSettings: path.join(HOME, 'Library', 'Application Support', 'Antigravity IDE', 'User', 'settings.json'),
+      zshrc: path.join(HOME, '.zshrc'),
+      bashrc: path.join(HOME, '.bashrc'),
+    };
+  } else if (IS_WINDOWS) {
+    const appData = process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming');
+    const psProfile = path.join(appData, 'PowerShell', 'profile.ps1');
+    return {
+      ...base,
+      vscodeSettings: path.join(appData, 'Code', 'User', 'settings.json'),
+      cursorSettings: path.join(appData, 'Cursor', 'User', 'settings.json'),
+      psProfile,
+      psCore: path.join(appData, 'PowerShell', 'profile.ps1'),
+      psDesktop: path.join(appData, 'PowerShell', 'Microsoft.PowerShell_profile.ps1'),
+    };
+  }
+  return base;
+})();
 
 const ZSH_SOURCE = `[ -f ~/.proxymu.env ] && . ~/.proxymu.env  # ProxyMu auto-config`;
 const BASH_SOURCE = `[ -f ~/.proxymu.env ] && . ~/.proxymu.env  # ProxyMu auto-config`;
@@ -226,55 +249,206 @@ async function shellEject(rcPath) {
   try { await fs.unlink(PATHS.proxymuEnv); } catch {}
 }
 
-// ─── Public catalog ───────────────────────────────────────────────────────────
+// ─── PowerShell (Windows) ─────────────────────────────────────────────────────
 
-const TOOLS = [
-  {
-    id: 'codex',
-    name: 'Codex CLI',
-    description: 'Set ProxyMu sebagai active provider di ~/.codex/config.toml',
-    configPath: '~/.codex/config.toml',
-    status: codexStatus,
-    inject: codexInject,
-    eject: codexEject
-  },
-  {
-    id: 'opencode',
-    name: 'OpenCode',
-    description: 'Tambah ProxyMu sebagai provider di ~/.config/opencode/opencode.json',
-    configPath: '~/.config/opencode/opencode.json',
-    status: opencodeStatus,
-    inject: opencodeInject,
-    eject: opencodeEject
-  },
-  {
-    id: 'kilo-code',
-    name: 'Kilo Code (Antigravity IDE)',
-    description: 'Set OpenAI-compatible API ke ProxyMu di extension settings',
-    configPath: '~/Library/.../Antigravity IDE/User/settings.json',
-    status: kiloStatus,
-    inject: kiloInject,
-    eject: kiloEject
-  },
-  {
-    id: 'zsh',
-    name: 'Zsh Shell',
-    description: 'Export env vars via ~/.proxymu.env ke ~/.zshrc — covers Claude Code, OpenAI SDK, dll.',
-    configPath: '~/.zshrc',
-    status: () => shellStatus(PATHS.zshrc),
-    inject: (h, p) => shellInject(PATHS.zshrc, ZSH_SOURCE, h, p),
-    eject: () => shellEject(PATHS.zshrc)
-  },
-  {
-    id: 'bash',
-    name: 'Bash Shell',
-    description: 'Export env vars via ~/.proxymu.env ke ~/.bashrc',
-    configPath: '~/.bashrc',
-    status: () => shellStatus(PATHS.bashrc),
-    inject: (h, p) => shellInject(PATHS.bashrc, BASH_SOURCE, h, p),
-    eject: () => shellEject(PATHS.bashrc)
+async function powershellStatus() {
+  if (!IS_WINDOWS) return { installed: false, injected: false };
+  const hasEnv = await exists(PATHS.proxymuEnv);
+  const hasProfile = await exists(PATHS.psCore) || await exists(PATHS.psDesktop);
+  if (!hasProfile) return { installed: true, injected: false };
+  try {
+    const profile = await fs.readFile(PATHS.psCore, 'utf8').catch(() =>
+      fs.readFile(PATHS.psDesktop, 'utf8')
+    );
+    return { installed: true, injected: hasEnv && profile.includes('ProxyMu auto-config') };
+  } catch {
+    return { installed: true, injected: false };
   }
-];
+}
+
+function powershellProfileContent(host, port) {
+  return [
+    '# ProxyMu — auto-generated, do not edit manually',
+    `$env:ANTHROPIC_BASE_URL = "http://${host}:${port}"`,
+    `$env:ANTHROPIC_AUTH_TOKEN = "proxy-local"`,
+    `$env:OPENAI_API_KEY = "proxy-local"`,
+    `$env:OPENAI_BASE_URL = "http://${host}:${port}/v1"`,
+    '# ProxyMu auto-config'
+  ].join('\n') + '\n';
+}
+
+async function powershellInject(host, port) {
+  await fs.writeFile(PATHS.proxymuEnv, envFileContent(host, port));
+
+  const profilePath = PATHS.psCore;
+  const profileDir = path.dirname(profilePath);
+  await fs.mkdir(profileDir, { recursive: true });
+
+  const sourceCmd = `. "$HOME\.proxymu.env"  # ProxyMu auto-config`;
+  const content = powershellProfileContent(host, port);
+
+  if (await exists(profilePath)) {
+    const existing = await fs.readFile(profilePath, 'utf8');
+    if (!existing.includes('ProxyMu auto-config')) {
+      await fs.appendFile(profilePath, '\n' + sourceCmd + '\n');
+    }
+  } else {
+    await fs.writeFile(profilePath, sourceCmd + '\n');
+  }
+}
+
+async function powershellEject() {
+  if (await exists(PATHS.psCore)) {
+    const profile = await fs.readFile(PATHS.psCore, 'utf8');
+    const cleaned = profile.replace(/\n?[^\n]*ProxyMu auto-config[^\n]*\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+    await fs.writeFile(PATHS.psCore, cleaned);
+  }
+  if (await exists(PATHS.psDesktop)) {
+    const profile = await fs.readFile(PATHS.psDesktop, 'utf8');
+    const cleaned = profile.replace(/\n?[^\n]*ProxyMu auto-config[^\n]*\n?/g, '\n').replace(/\n{3,}/g, '\n\n');
+    await fs.writeFile(PATHS.psDesktop, cleaned);
+  }
+  try { await fs.unlink(PATHS.proxymuEnv); } catch {}
+}
+
+// ─── VSCode (Windows & macOS) ──────────────────────────────────────────────────
+
+async function vscodeStatus() {
+  if (!IS_WINDOWS) return { installed: false, injected: false };
+  if (!await exists(PATHS.vscodeSettings)) return { installed: false, injected: false };
+  const cfg = await readJson(PATHS.vscodeSettings);
+  return { installed: true, injected: Boolean(cfg?.['anthropic.api-key'] === 'proxy-local' && cfg?.['anthropic.api-endpoint']?.includes('127.0.0.1')) };
+}
+
+async function vscodeInject(host, port) {
+  if (!IS_WINDOWS) return;
+  const cfg = await readJson(PATHS.vscodeSettings, {});
+  cfg['anthropic.api-key'] = 'proxy-local';
+  cfg['anthropic.api-endpoint'] = `http://${host}:${port}`;
+  await writeJson(PATHS.vscodeSettings, cfg);
+}
+
+async function vscodeEject() {
+  if (!IS_WINDOWS) return;
+  if (!await exists(PATHS.vscodeSettings)) return;
+  const cfg = await readJson(PATHS.vscodeSettings, {});
+  delete cfg['anthropic.api-key'];
+  delete cfg['anthropic.api-endpoint'];
+  await writeJson(PATHS.vscodeSettings, cfg);
+}
+
+// ─── Cursor (Windows) ──────────────────────────────────────────────────────────
+
+async function cursorStatus() {
+  if (!IS_WINDOWS) return { installed: false, injected: false };
+  if (!await exists(PATHS.cursorSettings)) return { installed: false, injected: false };
+  const cfg = await readJson(PATHS.cursorSettings);
+  return { installed: true, injected: Boolean(cfg?.['anthropic.api-key'] === 'proxy-local' && cfg?.['anthropic.api-endpoint']?.includes('127.0.0.1')) };
+}
+
+async function cursorInject(host, port) {
+  if (!IS_WINDOWS) return;
+  const cfg = await readJson(PATHS.cursorSettings, {});
+  cfg['anthropic.api-key'] = 'proxy-local';
+  cfg['anthropic.api-endpoint'] = `http://${host}:${port}`;
+  await writeJson(PATHS.cursorSettings, cfg);
+}
+
+async function cursorEject() {
+  if (!IS_WINDOWS) return;
+  if (!await exists(PATHS.cursorSettings)) return;
+  const cfg = await readJson(PATHS.cursorSettings, {});
+  delete cfg['anthropic.api-key'];
+  delete cfg['anthropic.api-endpoint'];
+  await writeJson(PATHS.cursorSettings, cfg);
+}
+
+// ─── Public catalog (platform-aware) ──────────────────────────────────────────
+
+const TOOLS = (() => {
+  const common = [
+    {
+      id: 'codex',
+      name: 'Codex CLI',
+      description: IS_WINDOWS ? 'Set ProxyMu sebagai active provider di ~/.codex/config.toml' : 'Set ProxyMu sebagai active provider di ~/.codex/config.toml',
+      configPath: '~/.codex/config.toml',
+      status: codexStatus,
+      inject: codexInject,
+      eject: codexEject
+    },
+    {
+      id: 'opencode',
+      name: 'OpenCode',
+      description: IS_WINDOWS ? 'Tambah ProxyMu sebagai provider di %APPDATA%\\opencode\\opencode.json' : 'Tambah ProxyMu sebagai provider di ~/.config/opencode/opencode.json',
+      configPath: IS_WINDOWS ? '%APPDATA%\\opencode\\opencode.json' : '~/.config/opencode/opencode.json',
+      status: opencodeStatus,
+      inject: opencodeInject,
+      eject: opencodeEject
+    }
+  ];
+
+  const macTools = [
+    {
+      id: 'kilo-code',
+      name: 'Kilo Code (Antigravity IDE)',
+      description: 'Set OpenAI-compatible API ke ProxyMu di extension settings',
+      configPath: '~/Library/.../Antigravity IDE/User/settings.json',
+      status: kiloStatus,
+      inject: kiloInject,
+      eject: kiloEject
+    },
+    {
+      id: 'zsh',
+      name: 'Zsh Shell',
+      description: 'Export env vars via ~/.proxymu.env ke ~/.zshrc — covers Claude Code, OpenAI SDK, dll.',
+      configPath: '~/.zshrc',
+      status: () => shellStatus(PATHS.zshrc),
+      inject: (h, p) => shellInject(PATHS.zshrc, ZSH_SOURCE, h, p),
+      eject: () => shellEject(PATHS.zshrc)
+    },
+    {
+      id: 'bash',
+      name: 'Bash Shell',
+      description: 'Export env vars via ~/.proxymu.env ke ~/.bashrc',
+      configPath: '~/.bashrc',
+      status: () => shellStatus(PATHS.bashrc),
+      inject: (h, p) => shellInject(PATHS.bashrc, BASH_SOURCE, h, p),
+      eject: () => shellEject(PATHS.bashrc)
+    }
+  ];
+
+  const windowsTools = [
+    {
+      id: 'powershell',
+      name: 'PowerShell',
+      description: 'Export env vars ke PowerShell profile — covers semua CLI tools',
+      configPath: '%APPDATA%\\PowerShell\\profile.ps1',
+      status: powershellStatus,
+      inject: powershellInject,
+      eject: powershellEject
+    },
+    {
+      id: 'vscode',
+      name: 'VS Code',
+      description: 'Set Anthropic API endpoint di VS Code settings',
+      configPath: '%APPDATA%\\Code\\User\\settings.json',
+      status: vscodeStatus,
+      inject: vscodeInject,
+      eject: vscodeEject
+    },
+    {
+      id: 'cursor',
+      name: 'Cursor',
+      description: 'Set Anthropic API endpoint di Cursor settings',
+      configPath: '%APPDATA%\\Cursor\\User\\settings.json',
+      status: cursorStatus,
+      inject: cursorInject,
+      eject: cursorEject
+    }
+  ];
+
+  return [...common, ...(IS_MAC ? macTools : IS_WINDOWS ? windowsTools : [])];
+})();
 
 async function listTools() {
   return Promise.all(

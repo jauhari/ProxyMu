@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Proxy Control Center</title>
+    <link rel="stylesheet" href="/assets/admin.css" />
+  </head>
+  <body>
+    <div id="authView" class="auth-shell">
+      <form id="authForm" class="auth-panel">
+        <div>
+          <p class="kicker" id="authMode">Admin Access</p>
+          <h1>Codex Proxy Control Center</h1>
+          <p id="authHelp">Masuk untuk mengelola provider, key, dan telemetry proxy.</p>
+        </div>
+        <label>
+          Username
+          <input id="username" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="password" type="password" autocomplete="current-password" required minlength="8" />
+        </label>
+        <button type="submit" class="primary">Continue</button>
+        <p id="authError" class="error"></p>
+      </form>
+    </div>
+
+    <main id="appView" class="app-shell hidden">
+      <header class="topbar">
+        <div>
+          <p class="kicker">Hybrid Proxy</p>
+          <h1>Control Center</h1>
+        </div>
+        <div class="top-actions">
+          <span id="connectionState" class="status-pill">Connecting</span>
+          <button id="refreshBtn" class="ghost">Refresh</button>
+          <button id="logoutBtn" class="ghost">Logout</button>
+        </div>
+      </header>
+
+      <section class="kpi-grid">
+        <article class="kpi">
+          <span>Requests</span>
+          <strong id="totalRequests">0</strong>
+          <small id="successRate">0% success</small>
+        </article>
+        <article class="kpi">
+          <span>Active Streams</span>
+          <strong id="activeRequests">0</strong>
+          <small id="uptime">0h 0m 0s uptime</small>
+        </article>
+        <article class="kpi">
+          <span>Latency P95 / P99</span>
+          <strong id="latencyP">0 / 0 ms</strong>
+          <small id="avgLatency">0 ms average</small>
+        </article>
+        <article class="kpi">
+          <span>Streamed</span>
+          <strong id="streamedBytes">0 MB</strong>
+          <small id="writeFailures">0 telemetry write failures</small>
+        </article>
+        <article class="kpi">
+          <span>Current Model</span>
+          <strong id="currentModel">-</strong>
+          <small id="modelMode">observe only</small>
+        </article>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="panel chart-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Latency</h2>
+              <p>Realtime request duration, last 80 successful streams.</p>
+            </div>
+            <select id="historyRange">
+              <option value="1h">1h</option>
+              <option value="24h" selected>24h</option>
+              <option value="7d">7d</option>
+              <option value="30d">30d</option>
+              <option value="90d">90d</option>
+            </select>
+          </div>
+          <canvas id="latencyCanvas" width="900" height="260"></canvas>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Provider Health</h2>
+              <p>Failover priority and current state.</p>
+            </div>
+            <button id="newProviderBtn" class="primary">Add Provider</button>
+          </div>
+          <div id="providers" class="provider-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Active Streams</h2>
+              <p>Requests currently flowing through the proxy.</p>
+            </div>
+          </div>
+          <div id="activeStreams" class="compact-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Failover & Errors</h2>
+              <p>Recent provider failures and proxy errors.</p>
+            </div>
+          </div>
+          <div id="eventTimeline" class="compact-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>LAN Access</h2>
+              <p>Localhost stays compatible; LAN clients can require a proxy token.</p>
+            </div>
+          </div>
+          <form id="settingsForm" class="settings-form">
+            <label class="toggle-row">
+              <input id="requireProxyToken" type="checkbox" checked />
+              Require token for LAN proxy calls
+            </label>
+            <label>Proxy token <input id="proxyAccessToken" type="password" placeholder="Leave blank to keep current token" /></label>
+            <button type="submit" class="primary">Save Settings</button>
+            <p id="settingsMessage" class="message"></p>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Compatible Endpoints</h2>
+              <p>Gunakan base URL proxy ini di tool lain.</p>
+            </div>
+          </div>
+          <div class="endpoint-list">
+            <code>/v1/responses</code>
+            <code>/v1/chat/completions</code>
+            <code>/v1/completions</code>
+            <code>/v1/messages</code>
+            <code>/v1/complete</code>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Model Routing</h2>
+              <p>Pilih model dari provider. Override bersifat opsional.</p>
+            </div>
+          </div>
+          <form id="modelRoutingForm" class="settings-form">
+            <label>Provider
+              <select id="modelProviderSelect"></select>
+            </label>
+            <button type="button" id="loadModelsBtn" class="ghost">Load Available Models</button>
+            <div>
+              <div class="field-label">Available models</div>
+              <div id="modelPills" class="model-pills"></div>
+            </div>
+            <label class="toggle-row">
+              <input id="overrideRequestModel" type="checkbox" />
+              Override incoming request model
+            </label>
+            <button type="submit" class="primary">Save Model Choice</button>
+            <p id="modelRoutingMessage" class="message"></p>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel request-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Request Log</h2>
+            <p>Stored locally for 90 days without prompt or response bodies.</p>
+          </div>
+          <div class="filters">
+            <input id="filterModel" placeholder="Model" />
+            <select id="filterStatus">
+              <option value="">All status</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+            </select>
+            <button id="applyFilters" class="ghost">Apply</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Model</th>
+                <th>Provider</th>
+                <th>TTFB</th>
+                <th>Duration</th>
+                <th>Bytes</th>
+                <th>Failover</th>
+              </tr>
+            </thead>
+            <tbody id="requestRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <aside id="providerDrawer" class="drawer hidden">
+      <form id="providerForm" class="drawer-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="providerFormTitle">Provider</h2>
+            <p>Key disimpan terenkripsi dan tidak pernah ditampilkan penuh.</p>
+          </div>
+          <button type="button" id="closeDrawer" class="ghost">Close</button>
+        </div>
+        <input id="providerId" type="hidden" />
+        <label>Name <input id="providerName" required /></label>
+        <div class="form-row">
+          <label>Protocol
+            <select id="providerProtocol">
+              <option value="https:">HTTPS</option>
+              <option value="http:">HTTP</option>
+            </select>
+          </label>
+          <label>Port <input id="providerPort" type="number" min="1" max="65535" placeholder="default" /></label>
+        </div>
+        <label>Host <input id="providerHost" required placeholder="api.provider.example" /></label>
+        <label>Base path <input id="providerBasePath" required value="/v1/responses" /></label>
+        <label>API key <input id="providerKey" type="password" placeholder="Leave blank to keep existing key" /></label>
+        <div class="form-row">
+          <label>Priority <input id="providerPriority" type="number" min="1" value="1" /></label>
+          <label>Timeout ms <input id="providerTimeout" type="number" min="1000" value="180000" /></label>
+        </div>
+        <label class="toggle-row">
+          <input id="providerEnabled" type="checkbox" checked />
+          Enabled
+        </label>
+        <div class="drawer-actions">
+          <button type="submit" class="primary">Save Provider</button>
+          <button type="button" id="testProviderBtn" class="ghost">Validate</button>
+          <button type="button" id="deleteProviderBtn" class="danger">Delete</button>
+        </div>
+        <p id="providerMessage" class="message"></p>
+      </form>
+    </aside>
+
+    <script src="/assets/admin.js"></script>
+  </body>
+</html>

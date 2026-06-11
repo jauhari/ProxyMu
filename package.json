@@ -1,0 +1,14 @@
+{
+  "name": "codex-proxy-control-center",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hybrid Codex proxy with LAN admin dashboard, provider failover, and telemetry.",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81"
+  }
+}

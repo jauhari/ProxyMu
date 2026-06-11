@@ -76,7 +76,49 @@ async function refreshMe() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshProviders(), refreshLive(), refreshRequests(), refreshSettings()]);
+  await Promise.all([refreshProviders(), refreshLive(), refreshRequests(), refreshSettings(), refreshInject()]);
+}
+
+async function refreshInject() {
+  try {
+    const payload = await api('/api/admin/inject');
+    renderInjectList(payload.tools || []);
+  } catch {
+    $('injectList').innerHTML = '<p class="message">Gagal memuat status tool.</p>';
+  }
+}
+
+function renderInjectList(tools) {
+  $('injectList').innerHTML = tools
+    .map((tool) => {
+      const badge = tool.injected
+        ? `<span class="inject-badge active">● Aktif</span>`
+        : tool.installed
+          ? `<span class="inject-badge inactive">○ Tidak aktif</span>`
+          : `<span class="inject-badge not-installed">Tidak terdeteksi</span>`;
+      const injectBtn = tool.installed && !tool.injected
+        ? `<button class="primary inject-do" data-id="${tool.id}">Injek</button>`
+        : '';
+      const ejectBtn = tool.injected
+        ? `<button class="ghost inject-undo" data-id="${tool.id}">Cabut</button>`
+        : '';
+      return `
+        <div class="inject-card ${tool.injected ? 'injected' : ''}">
+          <div class="inject-card-head">
+            <div class="inject-card-info">
+              <strong>${escapeHtml(tool.name)}</strong>
+              <span>${escapeHtml(tool.description)}</span>
+              <code>${escapeHtml(tool.configPath)}</code>
+            </div>
+            ${badge}
+          </div>
+          <div class="inject-card-actions">
+            ${injectBtn}
+            ${ejectBtn}
+          </div>
+        </div>`;
+    })
+    .join('');
 }
 
 async function refreshProviders() {
@@ -266,6 +308,38 @@ function renderSetupSnippets() {
   window.codexProxySetupSnippets = snippets;
 }
 
+function renderRouteRules() {
+  const routes = state.settings?.modelRoutes || [];
+  const providerOptions = (selectedId) =>
+    state.providers.length === 0
+      ? '<option value="">No provider</option>'
+      : state.providers
+          .map((provider) => `<option value="${provider.id}" ${provider.id === selectedId ? 'selected' : ''}>${escapeHtml(provider.name)}</option>`)
+          .join('');
+  $('routeRules').innerHTML =
+    routes.length === 0
+      ? '<div class="route-empty">No routing rules. All requests follow provider priority.</div>'
+      : routes
+          .map(
+            (route, index) => `
+      <div class="route-rule" data-index="${index}">
+        <input class="route-pattern" placeholder="claude-*" value="${escapeHtml(route.pattern)}" />
+        <select class="route-provider">${providerOptions(route.providerId)}</select>
+        <button type="button" class="ghost remove-route" title="Remove rule">&times;</button>
+      </div>`
+          )
+          .join('');
+}
+
+function readRouteRulesFromDom() {
+  return Array.from(document.querySelectorAll('#routeRules .route-rule'))
+    .map((row) => ({
+      pattern: row.querySelector('.route-pattern').value.trim(),
+      providerId: row.querySelector('.route-provider').value
+    }))
+    .filter((route) => route.pattern && route.providerId);
+}
+
 function renderModelRouting() {
   const settings = state.settings || {};
   const selectedProviderId = settings.selectedProviderId || state.providers[0]?.id || '';
@@ -288,6 +362,7 @@ function renderModelRouting() {
   $('modelRoutingMessage').textContent = selectedModel
     ? `Selected: ${selectedModel}${settings.overrideRequestModel ? ' (override on)' : ' (observe only)'}`
     : 'No model selected yet.';
+  renderRouteRules();
   renderLive();
 }
 
@@ -318,9 +393,7 @@ function drawLatency(series) {
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#0d1116';
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#27313c';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
   ctx.lineWidth = 1;
   for (let i = 1; i < 5; i++) {
     const y = (height / 5) * i;
@@ -330,24 +403,48 @@ function drawLatency(series) {
     ctx.stroke();
   }
   if (!series.length) {
-    ctx.fillStyle = '#8b98a8';
-    ctx.font = '14px system-ui';
+    ctx.fillStyle = '#8a93a3';
+    ctx.font = '14px Inter, system-ui';
     ctx.fillText('No latency samples yet', 24, 36);
     return;
   }
   const max = Math.max(...series.map((item) => item.value), 100);
-  ctx.strokeStyle = '#52d3a2';
-  ctx.lineWidth = 3;
+  const pointAt = (item, index) => ({
+    x: series.length === 1 ? 16 : (index / (series.length - 1)) * (width - 32) + 16,
+    y: height - 20 - (item.value / max) * (height - 42)
+  });
+
+  // Soft area fill under the line
+  const fill = ctx.createLinearGradient(0, 0, 0, height);
+  fill.addColorStop(0, 'rgba(74, 222, 128, 0.18)');
+  fill.addColorStop(1, 'rgba(74, 222, 128, 0)');
+  ctx.fillStyle = fill;
   ctx.beginPath();
   series.forEach((item, index) => {
-    const x = series.length === 1 ? 0 : (index / (series.length - 1)) * (width - 32) + 16;
-    const y = height - 20 - (item.value / max) * (height - 42);
+    const { x, y } = pointAt(item, index);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(pointAt(series[series.length - 1], series.length - 1).x, height - 20);
+  ctx.lineTo(pointAt(series[0], 0).x, height - 20);
+  ctx.closePath();
+  ctx.fill();
+
+  const stroke = ctx.createLinearGradient(0, 0, width, 0);
+  stroke.addColorStop(0, '#4ade80');
+  stroke.addColorStop(1, '#60a5fa');
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  series.forEach((item, index) => {
+    const { x, y } = pointAt(item, index);
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
-  ctx.fillStyle = '#8b98a8';
-  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#8a93a3';
+  ctx.font = '12px Inter, system-ui';
   ctx.fillText(`max ${max} ms`, 16, 18);
 }
 
@@ -418,6 +515,7 @@ function connectSse() {
     const payload = JSON.parse(event.data);
     if (payload.live) state.live = payload.live;
     if (payload.type === 'request' && payload.live) refreshRequests().catch(() => {});
+    if (payload.type === 'inject_status' && payload.tools) renderInjectList(payload.tools);
     renderLive();
   };
 }
@@ -444,7 +542,55 @@ $('logoutBtn').addEventListener('click', async () => {
   location.reload();
 });
 
+$('tabNav').addEventListener('click', (event) => {
+  const tab = event.target.closest('.tab');
+  if (!tab) return;
+  document.querySelectorAll('#tabNav .tab').forEach((el) => el.classList.toggle('active', el === tab));
+  $('tabOverview').classList.toggle('hidden', tab.dataset.tab !== 'overview');
+  $('tabSettings').classList.toggle('hidden', tab.dataset.tab !== 'settings');
+});
+
+$('addRouteBtn').addEventListener('click', () => {
+  state.settings = {
+    ...(state.settings || {}),
+    modelRoutes: [...readRouteRulesFromDom(), { pattern: '', providerId: state.providers[0]?.id || '' }]
+  };
+  renderRouteRules();
+});
+
+$('routeRules').addEventListener('click', (event) => {
+  const button = event.target.closest('.remove-route');
+  if (!button) return;
+  const index = Number(button.closest('.route-rule').dataset.index);
+  const routes = Array.from(document.querySelectorAll('#routeRules .route-rule')).map((row) => ({
+    pattern: row.querySelector('.route-pattern').value.trim(),
+    providerId: row.querySelector('.route-provider').value
+  }));
+  routes.splice(index, 1);
+  state.settings = { ...(state.settings || {}), modelRoutes: routes };
+  renderRouteRules();
+});
+
 $('refreshBtn').addEventListener('click', refreshAll);
+$('refreshInjectBtn').addEventListener('click', refreshInject);
+
+$('injectList').addEventListener('click', async (event) => {
+  const injectBtn = event.target.closest('.inject-do');
+  const ejectBtn = event.target.closest('.inject-undo');
+  const btn = injectBtn || ejectBtn;
+  if (!btn) return;
+  const id = btn.dataset.id;
+  btn.disabled = true;
+  btn.textContent = injectBtn ? 'Menginjek…' : 'Mencabut…';
+  try {
+    await api(`/api/admin/inject/${id}`, { method: injectBtn ? 'POST' : 'DELETE', body: '{}' });
+    await refreshInject();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = injectBtn ? 'Injek' : 'Cabut';
+    alert(err.message);
+  }
+});
 $('newProviderBtn').addEventListener('click', () => openDrawer());
 $('closeDrawer').addEventListener('click', closeDrawer);
 $('historyRange').addEventListener('change', async (event) => {
@@ -553,13 +699,14 @@ $('modelRoutingForm').addEventListener('submit', async (event) => {
       requireProxyTokenForLan: $('requireProxyToken').checked,
       selectedProviderId: $('modelProviderSelect').value,
       selectedModel: state.settings?.selectedModel || '',
-      overrideRequestModel: $('overrideRequestModel').checked
+      overrideRequestModel: $('overrideRequestModel').checked,
+      modelRoutes: readRouteRulesFromDom()
     };
     await api('/api/admin/settings', {
       method: 'PATCH',
       body: JSON.stringify(payload)
     });
-    $('modelRoutingMessage').textContent = 'Model choice saved.';
+    $('modelRoutingMessage').textContent = 'Model routing saved.';
     await refreshSettings();
   } catch (error) {
     $('modelRoutingMessage').textContent = error.message;

@@ -79,6 +79,19 @@ function applyModelRouting(body, serverConfig = {}) {
   }
 }
 
+function matchModelRoute(model, routes = []) {
+  if (!model || !Array.isArray(routes)) return '';
+  for (const route of routes) {
+    if (!route || !route.pattern || !route.providerId) continue;
+    const regex = new RegExp(
+      `^${String(route.pattern).trim().split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`,
+      'i'
+    );
+    if (regex.test(model)) return route.providerId;
+  }
+  return '';
+}
+
 function estimateAnthropicInputTokens(body) {
   try {
     const payload = JSON.parse(body || '{}');
@@ -149,6 +162,10 @@ async function createApp(options = {}) {
   const providerManager = new ProviderManager({
     getProviders: () => configStore.listProviderSecrets()
   });
+
+  // Cache provider health status in memory so we only flush to disk when it changes,
+  // not on every request.
+  const providerHealthCache = new Map(); // providerId -> 'healthy' | 'down'
   const adminApi = new AdminApi({
     configStore,
     auth,
@@ -223,6 +240,7 @@ async function createApp(options = {}) {
           clientRes: res,
           upstreamPath: url.pathname + url.search,
           incomingHeaders: req.headers,
+          preferredProviderId: matchModelRoute(model, serverConfig.modelRoutes),
           onAttempt(provider) {
             attempts.push(provider.name);
             telemetry.activeProvider(requestId, provider.name);
@@ -236,22 +254,28 @@ async function createApp(options = {}) {
               errorCategory: errorCategory(error),
               failoverPath: attempts.slice()
             });
-            configStore
-              .updateProvider(provider.id, {
-                healthStatus: 'down',
-                lastError: error.message,
-                lastCheckedAt: new Date().toISOString()
-              })
-              .catch(() => {});
+            if (providerHealthCache.get(provider.id) !== 'down') {
+              providerHealthCache.set(provider.id, 'down');
+              configStore
+                .updateProvider(provider.id, {
+                  healthStatus: 'down',
+                  lastError: error.message,
+                  lastCheckedAt: new Date().toISOString()
+                })
+                .catch(() => {});
+            }
           }
         });
-        configStore
-          .updateProvider(result.provider.id, {
-            healthStatus: 'healthy',
-            lastError: '',
-            lastCheckedAt: new Date().toISOString()
-          })
-          .catch(() => {});
+        if (providerHealthCache.get(result.provider.id) !== 'healthy') {
+          providerHealthCache.set(result.provider.id, 'healthy');
+          configStore
+            .updateProvider(result.provider.id, {
+              healthStatus: 'healthy',
+              lastError: '',
+              lastCheckedAt: new Date().toISOString()
+            })
+            .catch(() => {});
+        }
         telemetry.record({
           id: requestId,
           type: 'request',
@@ -335,6 +359,29 @@ async function start(options = {}) {
   console.log(`Codex Proxy Hybrid Control Center running on http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
   console.log(`Admin dashboard: http://localhost:${port}/admin`);
 
+  // Start periodic health checks (pre-warms TLS + seeds circuit breaker state).
+  // Health checks run in background and do not block startup.
+  app.providerManager.startHealthChecks({ configStore: app.configStore });
+  app.server.on('close', () => app.providerManager.stopHealthChecks());
+
+  // Poll for newly installed tools every 30 seconds; push via SSE if status changed.
+  const { listTools } = require('./injector');
+  let injectSnapshot = '';
+  const pollInject = async () => {
+    try {
+      const tools = await listTools();
+      const snap = JSON.stringify(tools.map(({ id, installed, injected }) => ({ id, installed, injected })));
+      if (snap !== injectSnapshot) {
+        injectSnapshot = snap;
+        app.telemetry.emit('update', { type: 'inject_status', tools });
+      }
+    } catch {}
+  };
+  pollInject();
+  const injectTimer = setInterval(pollInject, 30000);
+  if (injectTimer.unref) injectTimer.unref();
+  app.server.on('close', () => clearInterval(injectTimer));
+
   if (options.dashboard !== false && process.stdout.isTTY) {
     const dashboard = new TerminalDashboard({
       telemetry: app.telemetry,
@@ -353,6 +400,7 @@ module.exports = {
   createApp,
   estimateAnthropicInputTokens,
   hashPassword,
+  matchModelRoute,
   normalizeModelAlias,
   start
 };

@@ -12,7 +12,8 @@ const DEFAULT_CONFIG = {
     proxyAccessTokenHash: '',
     selectedProviderId: '',
     selectedModel: '',
-    overrideRequestModel: false
+    overrideRequestModel: false,
+    modelRoutes: []
   },
   admin: null,
   providers: [],

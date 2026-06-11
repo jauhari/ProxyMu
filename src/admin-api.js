@@ -16,6 +16,32 @@ function sendError(res, error) {
   });
 }
 
+function serverSettingsView(server) {
+  return {
+    port: server.port,
+    host: server.host,
+    publicBaseUrl: server.publicBaseUrl,
+    requireProxyTokenForLan: server.requireProxyTokenForLan,
+    proxyAccessTokenConfigured: Boolean(server.proxyAccessTokenHash),
+    selectedProviderId: server.selectedProviderId,
+    selectedModel: server.selectedModel,
+    overrideRequestModel: server.overrideRequestModel,
+    modelRoutes: Array.isArray(server.modelRoutes) ? server.modelRoutes : []
+  };
+}
+
+function sanitizeModelRoutes(routes) {
+  if (!Array.isArray(routes)) return [];
+  return routes
+    .filter((route) => route && typeof route === 'object')
+    .map((route) => ({
+      pattern: String(route.pattern || '').trim().slice(0, 200),
+      providerId: String(route.providerId || '').trim()
+    }))
+    .filter((route) => route.pattern && route.providerId)
+    .slice(0, 50);
+}
+
 function routeMatch(pathname, pattern) {
   const left = pathname.split('/').filter(Boolean);
   const right = pattern.split('/').filter(Boolean);
@@ -121,23 +147,7 @@ class AdminApi {
 
     if (method === 'GET' && url.pathname === '/api/admin/settings') {
       const server = await this.configStore.getServerConfig();
-      json(
-        res,
-        200,
-        {
-          server: {
-            port: server.port,
-            host: server.host,
-            publicBaseUrl: server.publicBaseUrl,
-            requireProxyTokenForLan: server.requireProxyTokenForLan,
-            proxyAccessTokenConfigured: Boolean(server.proxyAccessTokenHash),
-            selectedProviderId: server.selectedProviderId,
-            selectedModel: server.selectedModel,
-            overrideRequestModel: server.overrideRequestModel
-          }
-        },
-        adminHeaders()
-      );
+      json(res, 200, { server: serverSettingsView(server) }, adminHeaders());
       return;
     }
 
@@ -155,28 +165,15 @@ class AdminApi {
       if (Object.prototype.hasOwnProperty.call(body, 'overrideRequestModel')) {
         patch.overrideRequestModel = body.overrideRequestModel === true;
       }
+      if (Object.prototype.hasOwnProperty.call(body, 'modelRoutes')) {
+        patch.modelRoutes = sanitizeModelRoutes(body.modelRoutes);
+      }
       if (Object.prototype.hasOwnProperty.call(body, 'proxyAccessToken') && body.proxyAccessToken) {
         const { hashPassword } = require('./auth');
         patch.proxyAccessTokenHash = hashPassword(body.proxyAccessToken);
       }
       const server = await this.configStore.updateServerConfig(patch);
-      json(
-        res,
-        200,
-        {
-          server: {
-            port: server.port,
-            host: server.host,
-            publicBaseUrl: server.publicBaseUrl,
-            requireProxyTokenForLan: server.requireProxyTokenForLan,
-            proxyAccessTokenConfigured: Boolean(server.proxyAccessTokenHash),
-            selectedProviderId: server.selectedProviderId,
-            selectedModel: server.selectedModel,
-            overrideRequestModel: server.overrideRequestModel
-          }
-        },
-        adminHeaders()
-      );
+      json(res, 200, { server: serverSettingsView(server) }, adminHeaders());
       return;
     }
 
@@ -282,6 +279,28 @@ class AdminApi {
         },
         adminHeaders()
       );
+      return;
+    }
+
+    if (method === 'GET' && url.pathname === '/api/admin/inject') {
+      const { listTools } = require('./injector');
+      json(res, 200, { tools: await listTools() }, adminHeaders());
+      return;
+    }
+
+    const injectMatch = routeMatch(url.pathname, '/api/admin/inject/:toolId');
+    if (injectMatch && method === 'POST') {
+      const { injectTool } = require('./injector');
+      const serverConfig = await this.configStore.getServerConfig();
+      const port = serverConfig.port || 1432;
+      const result = await injectTool(injectMatch.toolId, '127.0.0.1', port);
+      json(res, 200, result, adminHeaders());
+      return;
+    }
+    if (injectMatch && method === 'DELETE') {
+      const { ejectTool } = require('./injector');
+      const result = await ejectTool(injectMatch.toolId);
+      json(res, 200, result, adminHeaders());
       return;
     }
 

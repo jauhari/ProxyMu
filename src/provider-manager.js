@@ -1,6 +1,28 @@
 const http = require('node:http');
 const https = require('node:https');
 
+class CircuitBreaker {
+  constructor({ cooldownMs = 30000 } = {}) {
+    this.cooldownMs = cooldownMs;
+    this._open = new Map(); // providerId -> reopensAt timestamp
+  }
+
+  isOpen(id) {
+    const t = this._open.get(id);
+    if (t === undefined) return false;
+    if (Date.now() >= t) { this._open.delete(id); return false; }
+    return true;
+  }
+
+  trip(id) {
+    this._open.set(id, Date.now() + this.cooldownMs);
+  }
+
+  reset(id) {
+    this._open.delete(id);
+  }
+}
+
 function errorCategory(error) {
   const message = String(error?.message || error || '');
   if (message.includes('Timeout')) return 'timeout';
@@ -12,6 +34,8 @@ function errorCategory(error) {
 class ProviderManager {
   constructor(options) {
     this.getProviders = options.getProviders;
+    this.circuit = new CircuitBreaker({ cooldownMs: options.circuitCooldownMs || 30000 });
+    this._healthTimer = null;
     this.httpsAgent = new https.Agent({
       keepAlive: true,
       maxSockets: 100,
@@ -26,14 +50,21 @@ class ProviderManager {
 
   async enabledProviders() {
     const providers = await this.getProviders();
-    return providers
+    const sorted = providers
       .filter((provider) => provider.enabled !== false)
       .sort((a, b) => Number(a.priority || 0) - Number(b.priority || 0));
+    // Skip circuit-open providers; fall back to full list if all are open
+    const available = sorted.filter((p) => !this.circuit.isOpen(p.id));
+    return available.length > 0 ? available : sorted;
   }
 
-  async proxyResponses({ body, clientRes, onAttempt, onFailure, upstreamPath, incomingHeaders }) {
-    const providers = await this.enabledProviders();
+  async proxyResponses({ body, clientRes, onAttempt, onFailure, upstreamPath, incomingHeaders, preferredProviderId }) {
+    let providers = await this.enabledProviders();
     if (!providers.length) throw Object.assign(new Error('No enabled providers configured'), { category: 'config' });
+    if (preferredProviderId) {
+      const preferred = providers.filter((p) => p.id === preferredProviderId);
+      providers = [...preferred, ...providers.filter((p) => p.id !== preferredProviderId)];
+    }
 
     const failoverPath = [];
     const failures = [];
@@ -43,12 +74,14 @@ class ProviderManager {
       if (onAttempt) onAttempt(provider);
       try {
         const result = await this.tryProvider(provider, body, clientRes, { upstreamPath, incomingHeaders });
+        this.circuit.reset(provider.id);
         return {
           ...result,
           provider,
           failoverPath
         };
       } catch (error) {
+        this.circuit.trip(provider.id);
         failures.push({ provider, error });
         if (onFailure) onFailure(provider, error);
         if (clientRes.headersSent) throw error;
@@ -77,6 +110,11 @@ class ProviderManager {
       let bytesOut = 0;
       let resolved = false;
 
+      // Short connect timeout (time-to-first-byte); longer stream timeout is handled
+      // by the upstream being active — data flow keeps the socket alive.
+      const streamTimeoutMs = Number(provider.timeoutMs || 180000);
+      const connectTimeoutMs = Math.min(Number(provider.connectTimeoutMs || 5000), streamTimeoutMs);
+
       const upstreamPath = options.upstreamPath || provider.basePath || '/v1/responses';
       const isAnthropicPath = /\/messages(?:$|\?)/.test(upstreamPath);
       const incomingHeaders = options.incomingHeaders || {};
@@ -103,6 +141,7 @@ class ProviderManager {
           headers
         },
         (upstream) => {
+          req.setTimeout(0); // response started — disable connect timeout
           ttfbMs = Date.now() - startedAt;
 
           if (upstream.statusCode >= 400) {
@@ -162,16 +201,17 @@ class ProviderManager {
       );
 
       req.on('error', reject);
-      req.setTimeout(Number(provider.timeoutMs || 180000), () => {
-        req.destroy(new Error(`Timeout ${provider.timeoutMs || 180000}ms`));
+      req.setTimeout(connectTimeoutMs, () => {
+        req.destroy(Object.assign(new Error(`Connect timeout ${connectTimeoutMs}ms`), { connectTimeout: true }));
       });
       req.write(data);
       req.end();
     });
   }
 
-  async listModels(provider) {
+  async listModels(provider, { timeoutMs } = {}) {
     return new Promise((resolve, reject) => {
+      const effectiveTimeout = Number(timeoutMs || provider.timeoutMs || 180000);
       const protocol = provider.protocol || 'https:';
       const transport = protocol === 'http:' ? http : https;
       const agent = protocol === 'http:' ? this.httpAgent : this.httpsAgent;
@@ -219,14 +259,60 @@ class ProviderManager {
         }
       );
       req.on('error', reject);
-      req.setTimeout(Number(provider.timeoutMs || 180000), () => {
-        req.destroy(new Error(`Timeout ${provider.timeoutMs || 180000}ms`));
+      req.setTimeout(effectiveTimeout, () => {
+        req.destroy(new Error(`Timeout ${effectiveTimeout}ms`));
       });
       req.end();
     });
   }
 
+  startHealthChecks({ configStore, intervalMs = 60000, checkTimeoutMs = 10000 } = {}) {
+    if (this._healthTimer) return;
+    const runChecks = async () => {
+      let providers;
+      try {
+        providers = await this.getProviders();
+      } catch {
+        return;
+      }
+      for (const p of providers.filter((p) => p.enabled !== false)) {
+        try {
+          await this.listModels(p, { timeoutMs: checkTimeoutMs });
+          this.circuit.reset(p.id);
+          if (configStore) {
+            configStore.updateProvider(p.id, {
+              healthStatus: 'healthy',
+              lastError: '',
+              lastCheckedAt: new Date().toISOString()
+            }).catch(() => {});
+          }
+        } catch (err) {
+          this.circuit.trip(p.id);
+          if (configStore) {
+            configStore.updateProvider(p.id, {
+              healthStatus: 'down',
+              lastError: err.message,
+              lastCheckedAt: new Date().toISOString()
+            }).catch(() => {});
+          }
+        }
+      }
+    };
+    // Pre-warm: run immediately to establish TLS sessions and seed health status
+    runChecks().catch(() => {});
+    this._healthTimer = setInterval(runChecks, intervalMs);
+    if (this._healthTimer.unref) this._healthTimer.unref();
+  }
+
+  stopHealthChecks() {
+    if (this._healthTimer) {
+      clearInterval(this._healthTimer);
+      this._healthTimer = null;
+    }
+  }
+
   close() {
+    this.stopHealthChecks();
     this.httpAgent.destroy();
     this.httpsAgent.destroy();
   }

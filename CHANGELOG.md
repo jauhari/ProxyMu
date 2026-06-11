@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-06-11 (continued)
+
+### Auto-Configure Tools & Detection
+- Added 30-second polling for newly installed tools (Codex CLI, OpenCode, Kilo Code, Zsh, Bash).
+- Added auto-detect via config file presence checks (no system APIs required).
+- Added one-click inject/eject functionality for each tool:
+  - Codex CLI: injects `[model_providers.proxymu]` into `~/.codex/config.toml`; restores via state backup.
+  - OpenCode: patches `provider.proxymu` into `~/.config/opencode/opencode.json`.
+  - Kilo Code: sets API provider to OpenAI-compatible in Antigravity IDE settings.
+  - Zsh/Bash: creates `~/.proxymu.env` with proxy env vars; sources via rc file.
+- Added `src/injector.js` with TOML/JSON/shell config helpers and tool registry.
+- Added SSE event `inject_status` that fires only when tool status changes (snapshot-based).
+- Added Settings tab "Auto-Configure Tools" panel with live inject/eject UI.
+- Added admin API endpoints: `GET /api/admin/inject`, `POST/DELETE /api/admin/inject/:toolId`.
+
 ## 2026-06-11
 
 - Added Claude Code compatibility through local proxy root URL.

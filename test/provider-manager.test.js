@@ -99,6 +99,80 @@ test('ProviderManager fails over and streams from the next enabled provider', as
   }
 });
 
+test('ProviderManager tries the preferred provider first regardless of priority', async () => {
+  const hits = [];
+  const primary = await startServer((req, res) => {
+    hits.push('primary');
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+  });
+  const secondary = await startServer((req, res) => {
+    hits.push('secondary');
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+  });
+
+  try {
+    const manager = new ProviderManager({
+      getProviders: async () => [
+        {
+          id: 'primary',
+          name: 'Primary',
+          protocol: 'http:',
+          host: '127.0.0.1',
+          port: primary.port,
+          basePath: '/v1/responses',
+          apiKey: 'sk-a',
+          priority: 1,
+          enabled: true,
+          timeoutMs: 1000
+        },
+        {
+          id: 'secondary',
+          name: 'Secondary',
+          protocol: 'http:',
+          host: '127.0.0.1',
+          port: secondary.port,
+          basePath: '/v1/responses',
+          apiKey: 'sk-b',
+          priority: 2,
+          enabled: true,
+          timeoutMs: 1000
+        }
+      ]
+    });
+    const writable = {
+      headersSent: false,
+      writableEnded: false,
+      writeHead() {
+        this.headersSent = true;
+      },
+      write() {},
+      end() {
+        this.writableEnded = true;
+      }
+    };
+
+    const result = await manager.proxyResponses({
+      body: '{"model":"claude-x"}',
+      clientRes: writable,
+      preferredProviderId: 'secondary'
+    });
+
+    assert.equal(result.provider.id, 'secondary');
+    assert.deepEqual(hits, ['secondary']);
+  } finally {
+    await primary.close();
+    await secondary.close();
+  }
+});
+
 test('ProviderManager forwards OpenAI-compatible chat completions path unchanged', async () => {
   let seenPath = '';
   let receivedBody = '';

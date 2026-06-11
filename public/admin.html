@@ -3,15 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Codex Proxy Control Center</title>
+    <title>ProxyMu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/assets/admin.css" />
   </head>
   <body>
     <div id="authView" class="auth-shell">
       <form id="authForm" class="auth-panel">
-        <div>
+        <div class="auth-brand">
+          <div class="brand-mark">μ</div>
           <p class="kicker" id="authMode">Admin Access</p>
-          <h1>Codex Proxy Control Center</h1>
+          <h1>ProxyMu</h1>
           <p id="authHelp">Masuk untuk mengelola provider, key, dan telemetry proxy.</p>
         </div>
         <label>
@@ -29,10 +33,17 @@
 
     <main id="appView" class="app-shell hidden">
       <header class="topbar">
-        <div>
-          <p class="kicker">Hybrid Proxy</p>
-          <h1>Control Center</h1>
+        <div class="brand">
+          <div class="brand-mark">μ</div>
+          <div>
+            <h1>ProxyMu</h1>
+            <p class="kicker">Hybrid Proxy Control</p>
+          </div>
         </div>
+        <nav class="tabs" id="tabNav">
+          <button class="tab active" data-tab="overview">Overview</button>
+          <button class="tab" data-tab="settings">Settings</button>
+        </nav>
         <div class="top-actions">
           <span id="connectionState" class="status-pill">Connecting</span>
           <button id="refreshBtn" class="ghost">Refresh</button>
@@ -40,186 +51,205 @@
         </div>
       </header>
 
-      <section class="kpi-grid">
-        <article class="kpi">
-          <span>Requests</span>
-          <strong id="totalRequests">0</strong>
-          <small id="successRate">0% success</small>
-        </article>
-        <article class="kpi">
-          <span>Active Streams</span>
-          <strong id="activeRequests">0</strong>
-          <small id="uptime">0h 0m 0s uptime</small>
-        </article>
-        <article class="kpi">
-          <span>Latency P95 / P99</span>
-          <strong id="latencyP">0 / 0 ms</strong>
-          <small id="avgLatency">0 ms average</small>
-        </article>
-        <article class="kpi">
-          <span>Streamed</span>
-          <strong id="streamedBytes">0 MB</strong>
-          <small id="writeFailures">0 telemetry write failures</small>
-        </article>
-        <article class="kpi">
-          <span>Current Model</span>
-          <strong id="currentModel">-</strong>
-          <small id="modelMode">observe only</small>
-        </article>
+      <section id="tabOverview" class="tab-view">
+        <section class="kpi-grid">
+          <article class="kpi">
+            <span>Requests</span>
+            <strong id="totalRequests">0</strong>
+            <small id="successRate">0% success</small>
+          </article>
+          <article class="kpi">
+            <span>Active Streams</span>
+            <strong id="activeRequests">0</strong>
+            <small id="uptime">0h 0m 0s uptime</small>
+          </article>
+          <article class="kpi">
+            <span>Latency P95 / P99</span>
+            <strong id="latencyP">0 / 0 ms</strong>
+            <small id="avgLatency">0 ms average</small>
+          </article>
+          <article class="kpi">
+            <span>Streamed</span>
+            <strong id="streamedBytes">0 MB</strong>
+            <small id="writeFailures">0 telemetry write failures</small>
+          </article>
+          <article class="kpi">
+            <span>Current Model</span>
+            <strong id="currentModel">-</strong>
+            <small id="modelMode">observe only</small>
+          </article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel chart-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Latency</h2>
+                <p>Realtime request duration, last 80 successful streams.</p>
+              </div>
+              <select id="historyRange">
+                <option value="1h">1h</option>
+                <option value="24h" selected>24h</option>
+                <option value="7d">7d</option>
+                <option value="30d">30d</option>
+                <option value="90d">90d</option>
+              </select>
+            </div>
+            <canvas id="latencyCanvas" width="900" height="260"></canvas>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Provider Health</h2>
+                <p>Failover priority and current state.</p>
+              </div>
+              <button id="newProviderBtn" class="primary">Add Provider</button>
+            </div>
+            <div id="providers" class="provider-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Active Streams</h2>
+                <p>Requests currently flowing through the proxy.</p>
+              </div>
+            </div>
+            <div id="activeStreams" class="compact-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Failover &amp; Errors</h2>
+                <p>Recent provider failures and proxy errors.</p>
+              </div>
+            </div>
+            <div id="eventTimeline" class="compact-list"></div>
+          </article>
+        </section>
+
+        <section class="panel request-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Request Log</h2>
+              <p>Stored locally for 90 days without prompt or response bodies.</p>
+            </div>
+            <div class="filters">
+              <input id="filterModel" placeholder="Model" />
+              <select id="filterStatus">
+                <option value="">All status</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+              </select>
+              <button id="applyFilters" class="ghost">Apply</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Status</th>
+                  <th>Model</th>
+                  <th>Provider</th>
+                  <th>TTFB</th>
+                  <th>Duration</th>
+                  <th>Bytes</th>
+                  <th>Failover</th>
+                </tr>
+              </thead>
+              <tbody id="requestRows"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
 
-      <section class="dashboard-grid">
-        <article class="panel chart-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Latency</h2>
-              <p>Realtime request duration, last 80 successful streams.</p>
+      <section id="tabSettings" class="tab-view hidden">
+        <section class="settings-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Model Routing</h2>
+                <p>Pilih model dari provider. Override bersifat opsional.</p>
+              </div>
             </div>
-            <select id="historyRange">
-              <option value="1h">1h</option>
-              <option value="24h" selected>24h</option>
-              <option value="7d">7d</option>
-              <option value="30d">30d</option>
-              <option value="90d">90d</option>
-            </select>
-          </div>
-          <canvas id="latencyCanvas" width="900" height="260"></canvas>
-        </article>
+            <form id="modelRoutingForm" class="settings-form">
+              <label>Provider
+                <select id="modelProviderSelect"></select>
+              </label>
+              <button type="button" id="loadModelsBtn" class="ghost">Load Available Models</button>
+              <div>
+                <div class="field-label">Available models</div>
+                <div id="modelPills" class="model-pills"></div>
+              </div>
+              <label class="toggle-row">
+                <input id="overrideRequestModel" type="checkbox" />
+                Override incoming request model
+              </label>
+              <div>
+                <div class="field-label">Routing rules — model pattern &rarr; provider</div>
+                <p class="hint">Pakai wildcard <code>*</code>, contoh <code>claude-*</code>. Rule pertama yang cocok menang; provider lain tetap jadi fallback.</p>
+                <div id="routeRules" class="route-rules"></div>
+                <button type="button" id="addRouteBtn" class="ghost">Add Rule</button>
+              </div>
+              <button type="submit" class="primary">Save Model Routing</button>
+              <p id="modelRoutingMessage" class="message"></p>
+            </form>
+          </article>
 
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Provider Health</h2>
-              <p>Failover priority and current state.</p>
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>LAN Access</h2>
+                <p>Localhost stays compatible; LAN clients can require a proxy token.</p>
+              </div>
             </div>
-            <button id="newProviderBtn" class="primary">Add Provider</button>
-          </div>
-          <div id="providers" class="provider-list"></div>
-        </article>
+            <form id="settingsForm" class="settings-form">
+              <label class="toggle-row">
+                <input id="requireProxyToken" type="checkbox" checked />
+                Require token for LAN proxy calls
+              </label>
+              <label>Proxy token <input id="proxyAccessToken" type="password" placeholder="Leave blank to keep current token" /></label>
+              <button type="submit" class="primary">Save Settings</button>
+              <p id="settingsMessage" class="message"></p>
+            </form>
 
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Active Streams</h2>
-              <p>Requests currently flowing through the proxy.</p>
-            </div>
-          </div>
-          <div id="activeStreams" class="compact-list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Failover & Errors</h2>
-              <p>Recent provider failures and proxy errors.</p>
-            </div>
-          </div>
-          <div id="eventTimeline" class="compact-list"></div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>LAN Access</h2>
-              <p>Localhost stays compatible; LAN clients can require a proxy token.</p>
-            </div>
-          </div>
-          <form id="settingsForm" class="settings-form">
-            <label class="toggle-row">
-              <input id="requireProxyToken" type="checkbox" checked />
-              Require token for LAN proxy calls
-            </label>
-            <label>Proxy token <input id="proxyAccessToken" type="password" placeholder="Leave blank to keep current token" /></label>
-            <button type="submit" class="primary">Save Settings</button>
-            <p id="settingsMessage" class="message"></p>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
+            <div class="panel-sub">
               <h2>Compatible Endpoints</h2>
               <p>Gunakan base URL proxy ini di tool lain.</p>
+              <div class="endpoint-list">
+                <code>/v1/responses</code>
+                <code>/v1/chat/completions</code>
+                <code>/v1/completions</code>
+                <code>/v1/messages</code>
+                <code>/v1/complete</code>
+              </div>
             </div>
-          </div>
-          <div class="endpoint-list">
-            <code>/v1/responses</code>
-            <code>/v1/chat/completions</code>
-            <code>/v1/completions</code>
-            <code>/v1/messages</code>
-            <code>/v1/complete</code>
-          </div>
-        </article>
+          </article>
 
-        <article class="panel setup-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Client Setup</h2>
-              <p>Snippet siap copy untuk tool yang memakai proxy ini.</p>
+          <article class="panel inject-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Auto-Configure Tools</h2>
+                <p>Injek ProxyMu langsung ke config tool yang dipilih — satu klik, tanpa edit manual.</p>
+              </div>
+              <button id="refreshInjectBtn" class="ghost">Refresh Status</button>
             </div>
-          </div>
-          <div id="setupSnippets" class="setup-snippets"></div>
-        </article>
+            <div id="injectList" class="inject-list"></div>
+          </article>
 
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Model Routing</h2>
-              <p>Pilih model dari provider. Override bersifat opsional.</p>
+          <article class="panel setup-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Client Setup</h2>
+                <p>Snippet siap copy untuk tool yang memakai proxy ini.</p>
+              </div>
             </div>
-          </div>
-          <form id="modelRoutingForm" class="settings-form">
-            <label>Provider
-              <select id="modelProviderSelect"></select>
-            </label>
-            <button type="button" id="loadModelsBtn" class="ghost">Load Available Models</button>
-            <div>
-              <div class="field-label">Available models</div>
-              <div id="modelPills" class="model-pills"></div>
-            </div>
-            <label class="toggle-row">
-              <input id="overrideRequestModel" type="checkbox" />
-              Override incoming request model
-            </label>
-            <button type="submit" class="primary">Save Model Choice</button>
-            <p id="modelRoutingMessage" class="message"></p>
-          </form>
-        </article>
-      </section>
-
-      <section class="panel request-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Request Log</h2>
-            <p>Stored locally for 90 days without prompt or response bodies.</p>
-          </div>
-          <div class="filters">
-            <input id="filterModel" placeholder="Model" />
-            <select id="filterStatus">
-              <option value="">All status</option>
-              <option value="success">Success</option>
-              <option value="failed">Failed</option>
-            </select>
-            <button id="applyFilters" class="ghost">Apply</button>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Status</th>
-                <th>Model</th>
-                <th>Provider</th>
-                <th>TTFB</th>
-                <th>Duration</th>
-                <th>Bytes</th>
-                <th>Failover</th>
-              </tr>
-            </thead>
-            <tbody id="requestRows"></tbody>
-          </table>
-        </div>
+            <div id="setupSnippets" class="setup-snippets"></div>
+          </article>
+        </section>
       </section>
     </main>
 

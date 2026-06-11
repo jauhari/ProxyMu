@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-06-12
+
+### Cross-Platform Support (Windows & macOS)
+- Platform detection via `os.platform()`: macOS, Windows, Linux
+- **macOS tools**: Codex CLI, OpenCode, Kilo Code, Zsh, Bash
+- **Windows tools**: Codex CLI, OpenCode, PowerShell, VS Code, Cursor
+- **Linux tools**: Codex CLI, OpenCode (minimal; extensible)
+- PowerShell profile injection for Windows (`$env:` variables)
+- VS Code settings injection for Windows (`anthropic.api-*` config keys)
+- Cursor settings injection for Windows (same as VS Code)
+- Refactored PATHS object to use platform-aware paths
+- Conditional TOOLS array populated by platform
+- All injection functions check platform before executing (safe on non-target OS)
+
 ## 2026-06-11 (continued)
 
 ### Auto-Configure Tools & Detection
